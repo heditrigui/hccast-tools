@@ -31,7 +31,7 @@ This is an HCCast screen-mirroring device. It receives Miracast, AirPlay and DLN
 ## Install
 
 ```bash
-pip install git+https://github.com/<your-username>/hccast-tools
+pip install git+https://github.com/heditrigui/hccast-tools
 ```
 
 Pure Python 3.9+, no dependencies, works on Windows, macOS and Linux.
