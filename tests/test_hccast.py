@@ -36,6 +36,7 @@ class FakeDevice:
 
     def __init__(self):
         self.calls = []
+        self.states = []  # transport states to report next (then PLAYING)
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -51,7 +52,12 @@ class FakeDevice:
                 self.wfile.write(data)
 
             def do_GET(self):
-                if self.path == "/setting_get":
+                if self.path == "/":
+                    self._send(200, '<html><script src="/launch.js"></script></html>', "text/html")
+                elif self.path == "/launch.js":
+                    self._send(200, 'get("setting_get");get("misc_submit?type=restart");get("upgrade_submit?url="+u)',
+                               "application/javascript")
+                elif self.path == "/setting_get":
                     self._send(200, json.dumps(SETTINGS), "application/json")
                 elif self.path == "/description.xml":
                     self._send(200, DESCRIPTION.format(base=fake.base))
@@ -71,7 +77,8 @@ class FakeDevice:
                                "<errorDescription>Seek mode not supported</errorDescription>"
                                "</UPnPError></detail></s:Fault></s:Body></s:Envelope>")
                     return
-                out = {"GetTransportInfo": "<CurrentTransportState>PLAYING</CurrentTransportState>",
+                state = fake.states.pop(0) if action == "GetTransportInfo" and fake.states else "PLAYING"
+                out = {"GetTransportInfo": f"<CurrentTransportState>{state}</CurrentTransportState>",
                        "GetPositionInfo": "<RelTime>0:00:10</RelTime><TrackDuration>0:01:00</TrackDuration>",
                        "GetVolume": "<CurrentVolume>35</CurrentVolume>"}.get(action, "")
                 self._send(200, "<s:Envelope xmlns:s='http://schemas.xmlsoap.org/soap/envelope/'><s:Body>"

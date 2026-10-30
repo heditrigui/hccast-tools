@@ -5,11 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 
-from hccast import __version__, device, dlna
-from hccast.serve import FileServer, lan_ip_for
+from hccast import __version__, device, dlna, player, weblink
 
 
 def _pick(ip: str | None) -> str:
@@ -70,33 +68,35 @@ def cmd_audit(args) -> int:
 def cmd_cast(args) -> int:
     ip = _pick(args.ip)
     r = dlna.find(ip)
+    slideshow = player.parse_interval(args.slideshow)
     source = args.source
     if source.startswith(("http://", "https://")):
-        dlna.play_url(r, source, title=args.title or source.rsplit("/", 1)[-1], mime=args.mime or "video/mp4")
-        print(f"Casting {source} to {r.name or ip}.")
-        return 0
+        stream = weblink.resolve(source) if not args.direct else weblink.Stream(source, source.rsplit("/", 1)[-1], "video/mp4")
+        title, mime = args.title or stream.title, args.mime or stream.mime
+        if not args.loop:
+            dlna.play_url(r, stream.url, title=title, mime=mime)
+            print(f"Casting {title} to {r.name or ip}.")
+            return 0
+        items: list = [stream.url]
+    else:
+        title, mime = args.title, args.mime
+        items = player.collect(Path(source))
 
-    path = Path(source)
-    if not path.is_file():
-        raise SystemExit(f"File not found: {path}")
-    with FileServer(path, lan_ip_for(ip), allowed_client=ip, port=args.port) as srv:
-        dlna.play_url(r, srv.url, title=args.title or path.stem, mime=args.mime or srv.mime)
-        print(f"Casting {path.name} to {r.name or ip}. Keep this window open; press Ctrl+C to stop.")
+    p = player.Player(r, items, slideshow=slideshow, shuffle=args.shuffle, loop=args.loop,
+                      title=title, mime=mime, port=args.port)
+    if len(items) > 1:
+        print(f"{len(items)} files{' (shuffled)' if args.shuffle else ''}{', looping' if args.loop else ''}.")
+    print(f"Casting to {r.name or ip}. Keep this window open; press Ctrl+C to stop.")
+    try:
+        p.run()
+        print("Playback finished.")
+    except KeyboardInterrupt:
+        p.stop()
         try:
-            idle_since = None
-            while True:
-                time.sleep(2)
-                state = dlna.status(r)["state"]
-                if state in ("STOPPED", "NO_MEDIA_PRESENT"):
-                    idle_since = idle_since or time.monotonic()
-                    if time.monotonic() - idle_since > 10:
-                        print("Playback finished.")
-                        return 0
-                else:
-                    idle_since = None
-        except KeyboardInterrupt:
             dlna.stop(r)
-            print("\nStopped.")
+        except dlna.DlnaError:
+            pass
+        print("\nStopped.")
     return 0
 
 
@@ -152,11 +152,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("ip", nargs="?")
     s.set_defaults(func=cmd_audit)
 
-    s = sub.add_parser("cast", help="play a local video/audio/image file or a URL on the device")
+    s = sub.add_parser("cast", help="play a file, a folder, a media URL or a web video page on the device")
     s.add_argument("ip", nargs="?")
-    s.add_argument("source", help="path to a file, or an http(s) URL")
+    s.add_argument("source", help="a file, a folder of media files, a direct media URL, or a page URL (needs yt-dlp)")
     s.add_argument("--title")
     s.add_argument("--mime", help="override the media type, e.g. video/mp4")
+    s.add_argument("--slideshow", default="5s", metavar="TIME", help="how long each photo stays up (default: 5s)")
+    s.add_argument("--shuffle", action="store_true", help="play a folder in random order")
+    s.add_argument("--loop", action="store_true", help="start again after the last item")
+    s.add_argument("--direct", action="store_true", help="send the URL as-is, without yt-dlp")
     s.add_argument("--port", type=int, default=0, help="local port for the file server (default: random)")
     s.set_defaults(func=cmd_cast)
 
@@ -175,6 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("ip", nargs="?")
     s.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
     s.set_defaults(func=cmd_restart)
+
     return p
 
 
@@ -197,6 +202,6 @@ def main(argv: list[str] | None = None) -> int:
         args.ip = None
     try:
         return args.func(args)
-    except (device.DeviceError, dlna.DlnaError, ValueError) as exc:
+    except (device.DeviceError, dlna.DlnaError, weblink.WebLinkError, FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
