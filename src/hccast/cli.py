@@ -134,6 +134,21 @@ def cmd_restart(args) -> int:
     return 0
 
 
+def cmd_set_password(args) -> int:
+    ip = _pick(args.ip)
+    found = device.password_calls(device.page_calls(ip))
+    if found:
+        print("This device's web page has a call that may change the password: " + ", ".join(found))
+        print("hccast does not send it yet, because its format is unknown. Please open an issue with this output:")
+        print("https://github.com/heditrigui/hccast-tools/issues")
+    else:
+        print("This device's own web page has no way to change the Wi-Fi Direct password, so hccast can't change it")
+        print("without guessing, which it won't do.")
+    print("\nChange it on the projector itself: open its settings with the remote and look for the")
+    print("Network / Wi-Fi Direct / Cast password option.")
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hccast", description="Inspect and control HCCast projectors and cast dongles.")
     p.add_argument("--version", action="version", version=f"hccast-tools {__version__}")
@@ -180,6 +195,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
     s.set_defaults(func=cmd_restart)
 
+    s = sub.add_parser("set-password", help="change the Wi-Fi Direct password (explains how, if the device can't)")
+    s.add_argument("ip", nargs="?")
+    s.set_defaults(func=cmd_set_password)
     return p
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -102,6 +103,27 @@ def analyze(data: dict) -> Report:
             "The settings page shows the Wi-Fi Direct password to anyone on your network, without a login."
         )
     return r
+
+
+def page_calls(ip: str, timeout: float = 5.0) -> list[str]:
+    """The `*_submit` / `*_get` calls the device's own web page makes (read-only: fetches the page and its scripts)."""
+    html = _get(ip, "/", timeout).decode("utf-8", "replace")
+    sources = [html]
+    for src in re.findall(r'<script[^>]+src="([^"]+)"', html):
+        if "://" not in src:  # only the device's own scripts
+            try:
+                sources.append(_get(ip, src, timeout).decode("utf-8", "replace"))
+            except DeviceError:
+                pass
+    calls = set()
+    for text in sources:
+        calls.update(re.findall(r"""["']/?([a-z_]+_(?:submit|get|set)(?:\?[^"']*)?)["']""", text))
+    return sorted(calls)
+
+
+def password_calls(calls: list[str]) -> list[str]:
+    """Calls that look like they change the Wi-Fi Direct password."""
+    return [c for c in calls if "pass" in c.lower() and not c.split("?")[0].endswith("_get")]
 
 
 def restart(ip: str) -> None:

@@ -1,4 +1,4 @@
-"""Playlists and slideshows and web links, against the fake device."""
+"""Playlists and slideshows, web links and the password check, against the fake device."""
 
 import json
 import threading
@@ -124,3 +124,16 @@ def test_cli_cast_page_link(fake, monkeypatch):
                         lambda url: {"title": "Clip", "url": "https://media.example.test/c.mp4", "ext": "mp4"})
     assert cli.main(["cast", "127.0.0.1", "https://www.youtube.com/watch?v=abc"]) == 0
     assert _uris(fake) == ["https://media.example.test/c.mp4"]
+
+
+# --- Wi-Fi Direct password ------------------------------------------------------------------
+
+def test_set_password_only_reads_and_explains(fake, monkeypatch, capsys):
+    _use_fake_page(fake, monkeypatch)
+    calls = device.page_calls("127.0.0.1")
+    assert calls == ["misc_submit?type=restart", "setting_get", "upgrade_submit?url="]
+    assert device.password_calls(calls) == []
+    assert device.password_calls(["password_submit?pwd=", "password_get"]) == ["password_submit?pwd="]
+    assert cli.main(["set-password", "127.0.0.1"]) == 1
+    assert "no way to change the Wi-Fi Direct password" in capsys.readouterr().out
+    assert fake.calls == []  # nothing was sent to the device besides reading its page
