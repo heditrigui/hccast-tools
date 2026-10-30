@@ -1,4 +1,4 @@
-"""Playlists and slideshows, web links and the password check, against the fake device."""
+"""Playlists and slideshows, web links, the password check and the GUI, against the fake device."""
 
 import json
 import threading
@@ -8,7 +8,7 @@ import urllib.request
 
 import pytest
 
-from hccast import cli, device, dlna, player, weblink
+from hccast import cli, device, dlna, gui, player, weblink
 from test_hccast import fake  # noqa: F401  (pytest fixture)
 
 
@@ -137,3 +137,45 @@ def test_set_password_only_reads_and_explains(fake, monkeypatch, capsys):
     assert cli.main(["set-password", "127.0.0.1"]) == 1
     assert "no way to change the Wi-Fi Direct password" in capsys.readouterr().out
     assert fake.calls == []  # nothing was sent to the device besides reading its page
+
+
+# --- GUI ------------------------------------------------------------------------------------
+
+def test_gui_api_requires_token_and_controls_device(fake):
+    ctl = gui.Controller()
+    ctl.renderers["127.0.0.1"] = fake.renderer()
+    httpd, url = gui.make_server(controller=ctl)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base, token = url.split("#")
+
+    def post(name, body, tok=token):
+        req = urllib.request.Request(base + "api/" + name, data=json.dumps(body).encode(), method="POST",
+                                     headers={"X-Token": tok, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+
+    try:
+        with urllib.request.urlopen(base) as resp:
+            assert b"<title>hccast</title>" in resp.read()
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            post("status", {"ip": "127.0.0.1"}, tok="wrong")
+        assert exc.value.code == 403
+
+        st = post("status", {"ip": "127.0.0.1"})
+        assert st["state"] == "PLAYING" and st["volume"] == 35
+        post("control", {"ip": "127.0.0.1", "action": "volume", "value": "20"})
+        assert "<DesiredVolume>20</DesiredVolume>" in fake.calls[-1][1]
+
+        assert post("cast", {"ip": "127.0.0.1", "source": "https://media.example.test/c.mp4"})["count"] == 1
+        deadline = time.monotonic() + 5
+        while not _uris(fake) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert _uris(fake) == ["https://media.example.test/c.mp4"]
+        post("control", {"ip": "127.0.0.1", "action": "stop"})
+
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            post("control", {"ip": "127.0.0.1", "action": "explode"})
+        assert exc.value.code == 400
+    finally:
+        ctl.stop_player()
+        httpd.shutdown()

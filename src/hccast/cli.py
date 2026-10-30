@@ -149,6 +149,13 @@ def cmd_set_password(args) -> int:
     return 1
 
 
+def cmd_gui(args) -> int:
+    from hccast import gui
+
+    gui.serve(port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hccast", description="Inspect and control HCCast projectors and cast dongles.")
     p.add_argument("--version", action="version", version=f"hccast-tools {__version__}")
@@ -198,6 +205,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("set-password", help="change the Wi-Fi Direct password (explains how, if the device can't)")
     s.add_argument("ip", nargs="?")
     s.set_defaults(func=cmd_set_password)
+
+    s = sub.add_parser("gui", help="open a simple control page in your browser")
+    s.add_argument("--port", type=int, default=0, help="local port for the page (default: random)")
+    s.add_argument("--no-browser", action="store_true", help="print the address instead of opening it")
+    s.set_defaults(func=cmd_gui)
     return p
 
 

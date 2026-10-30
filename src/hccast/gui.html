@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hccast</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1d2330; --muted:#677086; --line:#dde1e8; --accent:#3b5bdb; --warn:#b4560b; --bad:#c92a2a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1218; --card:#181c25; --text:#e7e9ef; --muted:#9aa2b5; --line:#2a303d; --accent:#7c9cff; --warn:#ffb454; --bad:#ff6b6b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:0 0 16px; }
+  h2 { font-size:15px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; padding:7px 12px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  input[type=text] { font:inherit; width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1; min-width:180px; }
+  .muted { color:var(--muted); }
+  .dev { display:flex; gap:10px; align-items:center; padding:8px 10px; border-radius:8px; cursor:pointer; border:1px solid transparent; }
+  .dev:hover { border-color:var(--line); }
+  .dev.sel { border-color:var(--accent); }
+  .tag { font-size:12px; padding:1px 7px; border-radius:20px; border:1px solid var(--line); color:var(--muted); }
+  table { border-collapse:collapse; }
+  td { padding:3px 14px 3px 0; vertical-align:top; }
+  .warn { color:var(--warn); margin:6px 0 0; }
+  #msg { min-height:1.4em; }
+  #msg.err { color:var(--bad); }
+  input[type=range] { width:200px; }
+  #log { font:12px/1.4 ui-monospace, Consolas, monospace; color:var(--muted); white-space:pre-wrap; margin-top:8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>hccast</h1>
+
+  <section>
+    <h2>Device</h2>
+    <div class="row"><button id="scan">Find devices</button><span class="muted" id="scanning"></span></div>
+    <div id="devices"></div>
+    <div class="row" style="margin-top:8px"><input type="text" id="manual" class="grow" placeholder="…or type its IP address"><button id="use">Use</button></div>
+  </section>
+
+  <section>
+    <h2>Cast</h2>
+    <div class="row">
+      <input type="text" id="source" class="grow" placeholder="File or folder path, video link, or YouTube/web page link">
+      <button id="pickFile">File…</button><button id="pickFolder">Folder…</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label><input type="checkbox" id="shuffle"> Shuffle</label>
+      <label><input type="checkbox" id="loop"> Loop</label>
+      <label>Photos for <input type="text" id="slideshow" value="5s" style="width:60px"></label>
+      <span class="grow"></span>
+      <button class="primary" id="cast">Cast</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Playback</h2>
+    <div id="now" class="muted">Not connected.</div>
+    <div class="row" style="margin-top:10px">
+      <button data-act="play">Play</button><button data-act="pause">Pause</button><button data-act="stop">Stop</button>
+      <span class="grow"></span>
+      <input type="text" id="seekTo" placeholder="0:05:30" style="width:90px"><button id="seek">Seek</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      Volume <input type="range" id="volume" min="0" max="100"> <span id="volLabel" class="muted">-</span>
+    </div>
+    <div id="log"></div>
+  </section>
+
+  <section>
+    <h2>Device info</h2>
+    <div id="info" class="muted">Pick a device.</div>
+  </section>
+
+  <div id="msg"></div>
+</main>
+<script>
+const token = location.hash.slice(1);
+let ip = localStorage.getItem("hccast-ip") || "";
+const $ = (id) => document.getElementById(id);
+
+function say(text, isError) {
+  $("msg").textContent = text || "";
+  $("msg").className = isError ? "err" : "";
+}
+
+async function api(name, body) {
+  const res = await fetch("/api/" + name, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Token": token },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s == null ? "" : String(s);
+  return d.innerHTML;
+}
+
+function select(newIp) {
+  ip = newIp;
+  try { localStorage.setItem("hccast-ip", ip); } catch (e) {}
+  document.querySelectorAll(".dev").forEach((el) => el.classList.toggle("sel", el.dataset.ip === ip));
+  loadInfo();
+  poll();
+}
+
+async function scan() {
+  $("scan").disabled = true;
+  $("scanning").textContent = "Searching…";
+  try {
+    const { devices } = await api("discover");
+    $("devices").innerHTML = devices.length ? devices.map((d) =>
+      `<div class="dev${d.ip === ip ? " sel" : ""}" data-ip="${esc(d.ip)}">
+         <strong>${esc(d.name || d.ip)}</strong><span class="muted">${esc(d.ip)}</span>
+         <span class="tag">${d.hccast ? "HCCast" : esc(d.model || "DLNA")}</span></div>`).join("")
+      : `<p class="muted">Nothing found. Is the device on and on the same Wi-Fi?</p>`;
+    document.querySelectorAll(".dev").forEach((el) => el.onclick = () => select(el.dataset.ip));
+    const hc = devices.filter((d) => d.hccast);
+    if (!ip && hc.length === 1) select(hc[0].ip);
+  } catch (e) { say(e.message, true); }
+  $("scan").disabled = false;
+  $("scanning").textContent = "";
+}
+
+async function loadInfo() {
+  if (!ip) return;
+  $("info").textContent = "Reading…";
+  try {
+    const d = await api("info", { ip });
+    $("info").innerHTML = `<table>${d.rows.map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td>${esc(v || "-")}</td></tr>`).join("")}</table>
+      <p>${esc(d.verdict)}</p>${d.warnings.map((w) => `<p class="warn">! ${esc(w)}</p>`).join("")}`;
+  } catch (e) { $("info").textContent = e.message; }
+}
+
+let volumeDragging = false;
+async function poll() {
+  if (!ip) return;
+  try {
+    const s = await api("status", { ip });
+    const pos = s.position ? `${s.position} / ${s.duration || "?"}` : "";
+    $("now").textContent = `${s.state}${s.current ? " · " + s.current : ""}${pos ? " · " + pos : ""}`;
+    if (!volumeDragging && s.volume != null) { $("volume").value = s.volume; $("volLabel").textContent = s.volume; }
+    $("log").textContent = (s.events || []).slice(-5).join("\n");
+  } catch (e) { $("now").textContent = e.message; }
+}
+
+async function control(action, value) {
+  if (!ip) return say("Pick a device first.", true);
+  try { await api("control", { ip, action, value }); say(""); poll(); } catch (e) { say(e.message, true); }
+}
+
+$("scan").onclick = scan;
+$("use").onclick = () => { const v = $("manual").value.trim(); if (v) select(v); };
+document.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => control(b.dataset.act));
+$("seek").onclick = () => control("seek", $("seekTo").value.trim());
+$("volume").oninput = () => { volumeDragging = true; $("volLabel").textContent = $("volume").value; };
+$("volume").onchange = () => { volumeDragging = false; control("volume", $("volume").value); };
+$("pickFile").onclick = async () => { try { const r = await api("browse", {}); if (r.path) $("source").value = r.path; } catch (e) { say(e.message, true); } };
+$("pickFolder").onclick = async () => { try { const r = await api("browse", { folder: true }); if (r.path) $("source").value = r.path; } catch (e) { say(e.message, true); } };
+$("cast").onclick = async () => {
+  if (!ip) return say("Pick a device first.", true);
+  const source = $("source").value.trim();
+  if (!source) return say("Enter a file, folder or link.", true);
+  $("cast").disabled = true;
+  say("Starting…");
+  try {
+    const r = await api("cast", { ip, source, shuffle: $("shuffle").checked, loop: $("loop").checked, slideshow: $("slideshow").value });
+    say(r.count > 1 ? `Playing ${r.count} files.` : "Playing.");
+    poll();
+  } catch (e) { say(e.message, true); }
+  $("cast").disabled = false;
+};
+
+if (ip) { select(ip); }
+scan();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>
