@@ -34,7 +34,7 @@ This is an HCCast screen-mirroring device. It receives Miracast, AirPlay and DLN
 pip install git+https://github.com/heditrigui/hccast-tools
 ```
 
-Pure Python 3.9+, no dependencies, works on Windows, macOS and Linux.
+Pure Python 3.10+, no dependencies, works on Windows, macOS and Linux.
 
 To play YouTube and other web video pages, also install [yt-dlp](https://github.com/yt-dlp/yt-dlp) (optional):
 
